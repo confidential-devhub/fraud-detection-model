@@ -4,6 +4,7 @@ WORKDIR /app
 
 COPY setup/models /app
 COPY setup/artifact /app
+COPY app.py /app
 
 RUN pip install numpy onnxruntime scikit-learn colorama
 
