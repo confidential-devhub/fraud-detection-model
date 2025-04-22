@@ -63,6 +63,26 @@ class_weights = class_weight.compute_class_weight('balanced', classes=np.unique(
 class_weights = {i : class_weights[i] for i in range(len(class_weights))}
 
 # Train the model and get performance
+model = Sequential()
+model.add(Dense(32, activation='relu', input_dim=len(feature_indexes)))
+model.add(Dropout(0.2))
+model.add(Dense(32))
+model.add(BatchNormalization())
+model.add(Activation('relu'))
+model.add(Dropout(0.2))
+model.add(Dense(32))
+model.add(BatchNormalization())
+model.add(Activation('relu'))
+model.add(Dropout(0.2))
+model.add(Dense(1, activation='sigmoid'))
+
+model.compile(
+    optimizer='adam',
+    loss='binary_crossentropy',
+    metrics=['accuracy']
+)
+
+model.summary()
 
 start = time.time()
 epochs = 2
