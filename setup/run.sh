@@ -1,7 +1,7 @@
 #!/bin/bash
 
 cd setup
-python -r requirements.txt
+pip install -r requirements.txt
 python create_model.py
 cd -
 
