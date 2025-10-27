@@ -7,10 +7,10 @@ import time
 from colorama import Fore, Style
 
 # Load ONNX model
-sess = rt.InferenceSession("setup/models/fraud/1/model.onnx", providers=rt.get_available_providers())
+sess = rt.InferenceSession("models/fraud/1/model.onnx", providers=rt.get_available_providers())
 
 # Load scaler
-with open('setup/artifact/scaler.pkl', 'rb') as handle:
+with open('artifact/scaler.pkl', 'rb') as handle:
     scaler = pickle.load(handle)
 
 input_name = sess.get_inputs()[0].name
