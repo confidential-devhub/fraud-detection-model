@@ -16,11 +16,9 @@ from time import sleep
 # Decryption key
 DECRYPTION_KEY_PATH = os.getenv("DECRYPTION_KEY_PATH", "")
 
-# SAS token path. This is a mounted  (sealed) secret volume.
-SAS_TOKEN_PATH = os.getenv("SAS_TOKEN_PATH", "/azure/azure-sas")
-
-# SAS token, replace the SAS token path if set
-SAS_TOKEN = os.getenv("SAS_TOKEN", "")
+# SAS token path. This is a mounted (sealed) secret volume.
+# Example: /azure/azure-sas
+SAS_TOKEN_PATH = os.getenv("SAS_TOKEN_PATH", "")
 default_sas_token = "c3A9ciZzdD0yMDI1LTEwLTI3VDE1OjQyOjI3WiZzZT0yMDI4LTEwLTI3VDIyOjU3OjI3WiZzcHI9aHR0cHMmc3Y9MjAyNC0xMS0wNCZzcj1iJnNpZz12amFSb3RkN2RlJTJCM1F3bHpIVmFIRjJHVnllaHcxeGIzZkZpWGU5RTdZT0klM0Q="
 
 # Azure storage name
@@ -34,9 +32,6 @@ CONTAINER_NAME = os.getenv("CONTAINER_NAME", "data")
 
 # Threshold prediction
 THRESHOLD_PREDICTION = os.getenv("TRESHOLD_PREDICTION", 0.999999)
-
-# Decryption key output path
-DECRYPTION_KEY_OUTPUT = "/app/dataset.key"
 
 DATASET_LOCATION = "/app/downloaded_datasets/"
 
@@ -57,23 +52,14 @@ def ask_model(query):
     perc_answer = "{:.5f}".format(100 * np.squeeze(prediction)) + "%"
     return (bool_answer, perc_answer)
 
-def fetch_secret_trustee(kpath, dest):
-    if kpath.startswith("kbs:///"):
-        kpath = kpath[len("kbs:///"):]
-    else:
-        raise Exception("Invalid decryption key path: " + kpath + ". It must start with kbs:///")
-    url = f"http://127.0.0.1:8006/cdh/resource/{kpath.lstrip('/')}"
-    req = Request(url)
-    with urlopen(req) as resp:
-        key_data = resp.read()
-    with open(dest, "wb") as f:
-        f.write(key_data)
-    print(f"  Fetched key from {kpath} to {dest}")
-
-def _head_n1(path):
-    """Run head -n 1 on a file and return the first line for display."""
-    r = subprocess.run(["head", "-n", "1", path], capture_output=True)
-    return (r.stdout or b"").decode("utf-8", errors="replace").strip() or "(empty)"
+def _head_n1(path, max_chars=20):
+    """Read the first line of a file and return its first max_chars characters for display."""
+    try:
+        with open(path, "rb") as f:
+            first_line = f.readline().decode("utf-8", errors="replace").strip()
+        return (first_line[:max_chars] + ("..." if len(first_line) > max_chars else "")) or "(empty)"
+    except Exception:
+        return "(error)"
 
 
 def decrypt_file(file_path):
@@ -86,7 +72,7 @@ def decrypt_file(file_path):
         result = subprocess.run(
             [
                 "openssl", "enc", "-d", "-aes-256-cfb", "-pbkdf2",
-                "-kfile", DECRYPTION_KEY_OUTPUT,
+                "-kfile", DECRYPTION_KEY_PATH,
                 "-in", file_path,
                 "-out", file_path_without_enc,
             ],
@@ -110,12 +96,12 @@ def open_all_files_in_folder(folder_path):
     for filename in os.listdir(folder_path):
         file_path = os.path.join(folder_path, filename)
         if os.path.isfile(file_path) and filename.endswith('.enc'):
-            print(f"  Encrypted file: {filename}")
+            print(f"  Found an encrypted file: {filename}")
             decrypt_file(file_path)
 
     for filename in os.listdir(folder_path):
         file_path = os.path.join(folder_path, filename)
-        if not os.path.isfile(file_path):
+        if not os.path.isfile(file_path) or filename.endswith('.enc'):
             continue
         try:
             with open(file_path, 'r', encoding='utf-8', newline='') as f:
@@ -133,27 +119,24 @@ def download_blob(storage_name, blob_name, container_name):
     download_file_path = DATASET_LOCATION + blob_name
     sas = 'NOT_FOUND'
 
-    if SAS_TOKEN:
-        default_sas_key_loc = "/azure/azure-sas-token"
-        print("  SAS_TOKEN set; fetching secret from Trustee")
-        fetch_secret_trustee(SAS_TOKEN, default_sas_key_loc)
-        SAS_TOKEN_PATH = default_sas_key_loc
-
-    try:
-        with open(SAS_TOKEN_PATH, 'r') as file:
-            sas = file.read()
-    except FileNotFoundError:
-        print("  SAS token file not found")
-    except Exception as e:
-        print(f"  Error reading SAS token: {e}")
+    if SAS_TOKEN_PATH == "":
+        print("  No SAS token path set; using default SAS token")
+        sas = base64.b64decode(default_sas_token).decode('utf-8')
+    else:
+        try:
+            with open(SAS_TOKEN_PATH, 'r') as file:
+                sas = file.read()
+        except FileNotFoundError:
+            print("  SAS token file not found")
+        except Exception as e:
+            print(f"  Error reading SAS token: {e}")
 
     if sas == 'NOT_FOUND' or sas == '':
-        print("  Using default SAS token (no token from file)")
-        sas = base64.b64decode(default_sas_token).decode('utf-8')
+        raise Exception("  ERROR: No SAS token found. SAS token path: '" + SAS_TOKEN_PATH + "'")
 
     blob_client = BlobClient.from_blob_url("https://" + storage_name + ".blob.core.windows.net/" + container_name + "/" + blob_name + "?" + sas)
 
-    print(f"  Downloading {container_name}/{blob_name} -> {download_file_path}")
+    print(f"  Downloading Azure:///{storage_name}/{container_name}/{blob_name} -> {download_file_path}")
     with open(download_file_path, "wb") as download_file:
         blob_data = blob_client.download_blob()
         blob_data.readinto(download_file)
@@ -170,8 +153,8 @@ def add_default_dataset():
 
 def inspect_data(data):
     print()
-    print(f"Loaded {len(data)} transactions")
-    print("Inspecting credit card transactions:")
+    print(f"#### Loaded {len(data)} transactions")
+    print("#### Inspecting credit card transactions:")
 
     i = 0
     for query in data:
@@ -196,19 +179,19 @@ def main():
     signal.signal(signal.SIGINT, _shutdown)
 
     if DECRYPTION_KEY_PATH:
-        print("Key path set; fetching decryption key from Trustee")
-        fetch_secret_trustee(DECRYPTION_KEY_PATH, DECRYPTION_KEY_OUTPUT)
-        print(f"Downloading blob: {CONTAINER_NAME}/{BLOB_NAME}")
+        print("#### Decryption key path set; downloading encrypted blob")
+        print(f"  Downloading blob: Azure:///{AZURE_STORAGE_NAME}/{CONTAINER_NAME}/{BLOB_NAME}")
         download_blob(AZURE_STORAGE_NAME, BLOB_NAME, CONTAINER_NAME)
     else:
-        print("No DECRYPTION_KEY_PATH; using default dataset")
+        print("  No decryption key path set; using default plaintext dataset")
         add_default_dataset()
 
-    print("Loading data from folder")
+    print()
+    print("#### Loading data from " + DATASET_LOCATION)
     data = open_all_files_in_folder(DATASET_LOCATION)
     inspect_data(data)
 
-    print("Done processing data, sleeping...")
+    print("#### Done processing data, sleeping...")
     while True:
         sleep(5)
 

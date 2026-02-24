@@ -3,18 +3,29 @@ kind: Pod
 metadata:
   name: fraud-detection
   namespace: default
-  labels:
-    app: fraud-detection
 spec:
   runtimeClassName: kata-remote
+  initContainers:
+    - name: fetch-secret
+      image: quay.io/confidential-devhub/signed/fraud-detection:latest
+      command:
+      - /bin/sh
+      - -c
+      - |
+        curl -sf http://localhost:8006/cdh/resource/default/fraud-dataset/dataset_key -o /app/downloaded_keys/dataset_key
+        curl -sf http://localhost:8006/cdh/resource/default/fraud-dataset/sas-token -o /app/downloaded_keys/sas-token
+        echo "Downloaded decryption key and SAS token"
+      volumeMounts:
+        - name: downloaded-keys-volume
+          mountPath: /app/downloaded_keys
   containers:
     - name: fraud-detection
       image: quay.io/confidential-devhub/signed/fraud-detection:latest
       env:
         - name: DECRYPTION_KEY_PATH
-          value: kbs:///default/fraud-dataset/dataset_key
-        - name: SAS_TOKEN
-          value: kbs:///default/fraud-dataset/sas-token
+          value: /app/downloaded_keys/dataset_key
+        - name: SAS_TOKEN_PATH
+          value: /app/downloaded_keys/sas-token
       securityContext:
         privileged: false
         allowPrivilegeEscalation: false
@@ -25,3 +36,9 @@ spec:
             - ALL
         seccompProfile:
           type: RuntimeDefault
+      volumeMounts:
+        - name: downloaded-keys-volume
+          mountPath: /app/downloaded_keys
+  volumes:
+    - name: downloaded-keys-volume
+      emptyDir: {}
